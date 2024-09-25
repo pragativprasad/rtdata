@@ -1,2 +1,2 @@
-# rt-data
-Introduction to data necessary to calculate time-varying reproduction rumber (Rt)
+# Introduction to data necessary to calculate time-varying reproduction number.
+
