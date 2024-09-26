@@ -2,6 +2,11 @@
 
 Contributors: Pragati V Prasad
 
+## Install
+
+devtools::install_github(pragativprasad_rtdata)
+library(rtdata)
+
 ## Data
 
 {state_name}_infections.csv.gz
