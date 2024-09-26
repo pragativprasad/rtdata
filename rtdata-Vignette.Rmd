@@ -59,14 +59,19 @@ library(summrt)
 devtools::install_github("pragativprasad/rtdata")
 library(rtdata)
 
+
 # Reading in the data
-cal_inf <- read.csv(here("data", "California_infections.csv.gz")) %>%
+data("California_infections")
+
+cal_inf <- California_infections %>%
   filter(run_id == 1.10001e+17) %>%
   group_by(date) %>%
   summarise(confirm = sum(new_Infectious)) %>%
   mutate(date = as.Date(date))
 
-cal_hosp <- read.csv(here("data", "California_hosp_linelist.csv.gz")) %>%
+data("California_hosp_linelist")
+
+cal_hosp <- California_hosp_linelist %>%
   filter(run_id == 1.10001e+17) %>%
   mutate(inf_to_hosp_delay = as.numeric(as.Date(hospitalization_date) - as.Date(infection_date)))
 
@@ -348,6 +353,9 @@ if (file.exists(here("ex_rt_objects", "epinow2_rt_hosp_covid.rds"))){
   
 ```
 
+```{r, fig.height = 5, fig.width = 4}
+plot_rt_epinow(rt_hosp_covid$estimates$summarised, date_type = "Infection Date", title = "Rt by Infection Date\n from Hospital Admissions Dates")
+```
 
 ```{r, eval=F}
 rt_death_covid <- epinow(
