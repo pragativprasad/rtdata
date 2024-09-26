@@ -354,7 +354,7 @@ if (file.exists(here("ex_rt_objects", "epinow2_rt_hosp_covid.rds"))){
 ```
 
 ```{r, fig.height = 5, fig.width = 4}
-plot_rt_epinow(rt_hosp_covid$estimates$summarised, date_type = "Infection Date", title = "Rt by Infection Date\n from Hospital Admissions Dates")
+plot_rt_epinow(rt_hosp_covid$estimates$summarised, date_type = "Infection Date", title = "COVID-19 Rt by Infection Date\n from Hospital Admissions Dates")
 ```
 
 ```{r, eval=F}
@@ -370,7 +370,7 @@ summrt_death_covid <- summrt::summarize_rtestimate(rt_death_covid)
 
 ```{r, echo=F, eval=F}
 if (file.exists(here("ex_rt_objects", "epinow2_rt_death_covid.rds"))){
-  # summrt_death_covid <- readRDS(here("ex_rt_objects", "epinow2_summrt_death_covid.rds"))
+  summrt_death_covid <- readRDS(here("ex_rt_objects", "epinow2_summrt_death_covid.rds"))
   rt_death_covid <- readRDS(here("ex_rt_objects", "epinow2_rt_death_covid.rds")) 
 }else{
   rt_death_covid <- epinow(
