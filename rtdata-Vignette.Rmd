@@ -1,0 +1,385 @@
+---
+title: "Data for Rt"
+author: "Pragati Prasad"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+  
+vignette: >
+  %\VignetteIndexEntry{Data for Rt}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  warning = FALSE,
+  message = FALSE,
+  dpi = 200
+  )
+
+library(pacman)
+pacman::p_load(tidyverse,
+               here,
+               devtools,
+               EpiNow2,
+               fitdistrplus)
+
+```
+
+
+The ideal data necessary for accurate ${R_{t}}$ calculation is <span style="color:#8B008B;">infection date</span> and the generation time, which is the distribution of time between infection date of the infector and infection date of the infectee. However, this can be hard to come by in real-world epidemic data. 
+
+Case data may have <span style="color:#CC5500;">symptom onset date</span> and the serial interval, which is the distribution of time between onset date of the infector and onset date of the infectee. These data will be sufficient for infections that do not have significant pre-symptomatic transmission.
+
+It is even more likely that we will have <span style="color:#045D5D;">hospitalization</span> or <span style="color:grey;">mortality dates</span>. 
+
+With proper adjustment for delays (i.e. the time between <span style="color:#8B008B;">infection date</span> and <span style="color:#CC5500;">symptom onset date</span>, <span style="color:#8B008B;">infection date</span> and <span style="color:#045D5D;">hospitalization date</span>, and <span style="color:#8B008B;">infection date</span> and <span style="color:grey;">mortality dates</span>), we can estimate ${R_{t}}$ from these other data sources.
+
+Luckily, some ${R_{t}}$ packages can account for these delays.
+
+In this tutorial, we'll use two (simulated) data sources to estimate time-varying reproduction number ${R_{t}}$, using the `summrt` R package, and compare the resulting estimates.
+
+ - Infection date (ideal)
+ - Hospitalization date (real-world)
+
+![Figure 1.](figs/fig1.png){width=85%}
+# Formatting your data
+
+We're using simulated infection time series and hospitalization linelists for the state of California. 
+
+
+```{r}
+
+# Install and Load `summrt` package
+devtools::install_github("EpiForeSITE/summrt")
+library(summrt)
+
+devtools::install_github("pragativprasad/rtdata")
+library(rtdata)
+
+# Reading in the data
+cal_inf <- read.csv(here("data", "California_infections.csv.gz")) %>%
+  filter(run_id == 1.10001e+17) %>%
+  group_by(date) %>%
+  summarise(confirm = sum(new_Infectious)) %>%
+  mutate(date = as.Date(date))
+
+cal_hosp <- read.csv(here("data", "California_hosp_linelist.csv.gz")) %>%
+  filter(run_id == 1.10001e+17) %>%
+  mutate(inf_to_hosp_delay = as.numeric(as.Date(hospitalization_date) - as.Date(infection_date)))
+
+cal_hosp_byinfdate <- cal_hosp %>% 
+  group_by(infection_date) %>%
+  summarise(confirm = n()) %>%
+  mutate(date = as.Date(infection_date)) %>%
+  dplyr::select(date, confirm)
+  
+  
+cal_hosp_byhospdate <- cal_hosp %>% 
+  group_by(hospitalization_date) %>%
+  summarise(confirm = n()) %>%
+  mutate(date = as.Date(hospitalization_date)) %>%
+  dplyr::select(date, confirm)
+
+```
+
+
+# Simulated Data Example
+
+## Using Infection Time Series
+
+There is no need to include the delay parameter in `EpiNow2::epinow()` function call if we are using infection dates:
+
+```{r, eval=F}
+rt_inf <- epinow(
+  data = cal_inf,
+  delay = delay_opts(),
+  generation_time = generation_time_opts(example_generation_time),
+  rt = rt_opts(prior = list(mean = 2, sd = 0.2))#,
+  # stan = stan_opts(cores = 4, control = list(adapt_delta = 0.99))
+)
+
+summrt_inf <- summrt::summarize_rtestimate(rt_inf)
+```
+
+```{r, echo=F}
+if (file.exists(here("ex_rt_objects", "epinow2_summrt_inf.rds"))){
+  summrt_inf <- readRDS(here("ex_rt_objects", "epinow2_summrt_inf.rds"))
+  rt_inf <- readRDS(here("ex_rt_objects", "epinow2_rt_inf.rds")) 
+}else{
+  rt_inf <- epinow(
+  data = cal_inf,
+  delay = delay_opts(),
+  generation_time = generation_time_opts(example_generation_time),
+  rt = rt_opts(prior = list(mean = 2, sd = 0.2)),
+  stan = stan_opts(cores = 4, control = list(adapt_delta = 0.99))#, chains = 1, samples=100, warmup=25)
+  )
+  # summrt_inf <- summrt::summarize_rtestimate(rt_inf)
+  
+  saveRDS(rt_inf, here("ex_rt_objects", "epinow2_summrt_inf.rds"))
+  saveRDS(rt_inf, here("ex_rt_objects", "epinow2_rt_inf.rds"))
+
+}
+  
+```
+
+```{r, echo=FALSE}
+plot_rt_epinow <- function(dat, date_type, title, legend = TRUE){
+  
+  rt_all <- dat %>%
+    filter(variable == "R")
+  rt_est <- dat %>%
+    filter(variable == "R", type == "estimate")
+  rt_par <- dat %>%
+    filter(variable == "R", type == "estimate based on partial data")
+  rt_for <- dat %>%
+    filter(variable == "R", type == "forecast")
+  
+  plot(rt_all$date, rt_all$median, type="l", xlab = paste0(date_type, " Date"), ylab = "Rt",
+       main = title, ylim=c(0.5, 1.5))
+  lines(x = rt_all$date, y = rep(1, length(rt_all$date)), lty = 2)
+  polygon(c(rt_est$date, rev(rt_est$date)), 
+          c(rt_est$lower_90, rev(rt_est$upper_90)), 
+          col = adjustcolor("#1b9e77", alpha.f=0.5), border = adjustcolor("#1b9e77", alpha.f=0.5))
+  polygon(c(rt_par$date, rev(rt_par$date)), 
+          c(rt_par$lower_90, rev(rt_par$upper_90)), 
+          col = adjustcolor("#d95f02", alpha.f=0.5), border = adjustcolor("#d95f02", alpha.f=0.5))
+  polygon(c(rt_for$date, rev(rt_for$date)), 
+          c(rt_for$lower_90, rev(rt_for$upper_90)), 
+          col = adjustcolor("#7570b3", alpha.f=0.5), border = adjustcolor("#7570b3", alpha.f=0.5))
+  if(legend){
+    legend("bottomleft", legend=c("Estimate", "Estimate with Partial Data", "Forecast"),
+         fill=c("#1b9e77", "#d95f02", "#7570b3"), inset=.02, cex=0.6)
+  }
+}
+
+```
+
+```{r, fig.height = 5, fig.width = 4}
+plot_rt_epinow(rt_inf$estimates$summarised, date_type = "Infection", title = "Rt by Infection Date")
+```
+
+## Using Infection Dates of Hospitalizations
+
+Our simulated hospitalization dataset includes infection dates, so let's model Rt for those hospitalized, using their known infection dates.
+
+```{r, eval=F}
+rt_hosp_byinf <- epinow(
+  data = cal_hosp_byinfdate,
+  delay = delay_opts(),
+  generation_time = generation_time_opts(example_generation_time),
+  rt = rt_opts(prior = list(mean = 2, sd = 0.2))#,
+  # stan = stan_opts(cores = 4, control = list(adapt_delta = 0.99))
+)
+
+summrt_hosp_byinf <- summrt::summarize_rtestimate(rt_hosp_byinf)
+```
+
+```{r, echo=F}
+if (file.exists(here("ex_rt_objects", "epinow2_summrt_hosp_byinf.rds"))){
+  summrt_hosp_byinf <- readRDS(here("ex_rt_objects", "epinow2_summrt_hosp_byinf.rds")) 
+  rt_hosp_byinf <- readRDS(here("ex_rt_objects", "epinow2_rt_hosp_byinf.rds")) 
+}else{
+  rt_hosp_byinf <- epinow(
+  data = cal_hosp_byinfdate,
+  delay = delay_opts(),
+  generation_time = generation_time_opts(example_generation_time),
+  rt = rt_opts(prior = list(mean = 2, sd = 0.2)),
+  stan = stan_opts(cores = 4, control = list(adapt_delta = 0.99))#, chains = 1, samples=100, warmup=25)
+  )
+  summrt_hosp_byinf <- summrt::summarize_rtestimate(rt_hosp_byinf)
+  
+  saveRDS(summrt_hosp_byinf, here("ex_rt_objects", "epinow2_summrt_hosp_byinf.rds"))
+  saveRDS(rt_hosp_byinf, here("ex_rt_objects", "epinow2_rt_hosp_byinf.rds"))
+}
+  
+```
+
+```{r, fig.height = 5, fig.width = 4}
+
+plot_rt_epinow(rt_hosp_byinf$estimates$summarised, "Infection", "Rt from Infection Date\nHospitalization Data")
+```
+
+## Using Hospitalization Dates and some information on Infection to Hospitalization Delays
+
+Now let's assume we only know some information about the distribution, that it's a log-normal distribution with `meanlog`= 0.764 and `sdlog` = 0.556.
+
+```{r}
+# Commented lines contain some information on how the distribution of infection to hospitalization delays was fitted
+# hist(cal_hosp$inf_to_hosp_delay)
+# lnorm_delay <- fitdist(cal_hosp$inf_to_hosp_delay,"lnorm")
+# summary(lnorm_delay)
+# max(cal_hosp$inf_to_hosp_delay)
+
+inf_hosp_dist = dist_spec(distribution = "lognormal", mean = 0.764, sd = 0.556, max = 15)
+```
+
+Since we have the delays, we could also estimate the delay using `EpiNow2::estimate_delay()`.
+
+```{r}
+# inf_hosp_dist <- estimate_delay(
+#   cal_hosp$inf_to_hosp_delay,
+#   max_value = 15, bootstraps = 1
+# )
+```
+
+Whichever delay distribution you choose, we can now input this into `EpiNow2::epinow()`
+
+```{r, eval=F}
+rt_hosp_wdelays <- epinow(
+  data = cal_hosp_byhospdate,
+  delay = delay_opts(inf_hosp_dist),
+  generation_time = generation_time_opts(example_generation_time),
+  rt = rt_opts(prior = list(mean = 2, sd = 0.2))#,
+  # stan = stan_opts(cores = 4, control = list(adapt_delta = 0.99))
+)
+
+summrt_hosp_wdelays <- summrt::summarize_rtestimate(rt_hosp_wdelays)
+```
+
+
+```{r, echo=F}
+if (file.exists(here("ex_rt_objects", "epinow2_summrt_hosp_wdelays.rds"))){
+  summrt_hosp_wdelays <- readRDS(here("ex_rt_objects", "epinow2_summrt_hosp_wdelays.rds")) 
+  rt_hosp_wdelays <- readRDS(here("ex_rt_objects", "epinow2_rt_hosp_wdelays.rds")) 
+}else{
+  rt_hosp_wdelays <- epinow(
+  data = cal_hosp_byinfdate,
+  delay = delay_opts(),
+  generation_time = generation_time_opts(example_generation_time),
+  rt = rt_opts(prior = list(mean = 2, sd = 0.2)),
+  stan = stan_opts(cores = 4, control = list(adapt_delta = 0.99))#, chains = 1, samples=100, warmup=25)
+  )
+  summrt_hosp_wdelays <- summrt::summarize_rtestimate(rt_hosp_wdelays)
+  
+  saveRDS(summrt_hosp_wdelays, here("ex_rt_objects", "epinow2_summrt_hosp_wdelays.rds"))
+  saveRDS(rt_hosp_wdelays, here("ex_rt_objects", "epinow2_rt_hosp_wdelays.rds"))
+}
+  
+```
+
+```{r, fig.height = 5, fig.width = 4}
+plot_rt_epinow(rt_hosp_wdelays$estimates$summarised, "Infection", "Rt from Infection Date\nHospitalization Data with Delays")
+```
+
+## Comparing across data sources
+
+First, we'll plot the 3 different epi-curves from which the Rt estimates are from.
+
+```{r, fig.height = 5, fig.width = 4}
+# par(mfrow = c(1, 2))
+
+plot(cal_inf$date, cal_inf$confirm, xlab = "Date", ylab = "Infections", main = "Infection Curve")
+
+# plot(cal_hosp_byinfdate$date, cal_hosp_byinfdate$confirm, xlab = "Date", ylab = "Hospitalizations", main = "Hospitaliation Curve \n by Infection Date")
+
+plot(cal_hosp_byhospdate$date, cal_hosp_byhospdate$confirm, xlab = "Date", ylab = "Rt Estimates", main = "Hospitalization Curve \n by Hospitalization Date")
+
+```
+
+Next, we've plotted the Rt estimates calculated via EpiNow2 from the data above.
+
+```{r, fig.height = 5, fig.width = 4}
+# par(mfrow=c(1,2),oma=c(5,0,0,0),xpd=NA)
+
+plot_rt_epinow(rt_inf$estimates$summarised, "Infection", "Rt from Infection Date")
+plot_rt_epinow(rt_hosp_wdelays$estimates$summarised, "Infection", "Rt from Infection Date\nHospitalization Data with Delays")
+
+
+```
+
+# Real world data example
+
+Now, we'll compare using 
+
+```{r}
+# Reading in the data
+us_hospadmin <- read.csv(here("data", "Weekly_US_Hospitalizations_20240925.csv")) %>%
+  filter(Geographic.aggregation == "USA") %>%
+  dplyr::select(Week.Ending.Date, Weekly.Total.COVID.19.Admissions) %>%
+  rename(date = Week.Ending.Date,
+         confirm = Weekly.Total.COVID.19.Admissions) %>%
+  mutate(date = as.Date(date),
+         confirm = as.numeric(confirm)) %>%
+  filter(date >= as.Date("2023-05-01"),
+         date <= as.Date("2024-05-01"))
+
+us_death <- read.csv(here("data", "Weekly_US_Deaths_20240924.csv")) %>%
+  dplyr::select(Date, Weekly.Deaths) %>%
+  rename(date = Date,
+         confirm = Weekly.Deaths) %>%
+  mutate(date = as.Date(date, "%b %d %Y"),
+         confirm = as.numeric(confirm))%>%
+  filter(date >= as.Date("2023-05-01"),
+         date <= as.Date("2024-05-01"))
+```
+
+```{r, eval=F}
+rt_hosp_covid <- epinow(
+  data = us_hospadmin,
+  delay = delay_opts(inf_hosp_dist),
+  generation_time = generation_time_opts(get_generation_time(disease = "SARS-CoV-2", source = "ganyani")),
+  rt = rt_opts(prior = list(mean = 2, sd = 0.2))
+  )
+
+summrt_hospadmin_covid <- summrt::summarize_rtestimate(rt_hosp_covid)
+```
+
+```{r, echo=F}
+if (file.exists(here("ex_rt_objects", "epinow2_rt_hosp_covid.rds"))){
+  summrt_hosp_covid <- readRDS(here("ex_rt_objects", "epinow2_summrt_hosp_covid.rds"))
+  rt_hosp_covid <- readRDS(here("ex_rt_objects", "epinow2_rt_hosp_covid.rds")) 
+}else{
+  rt_hosp_covid <- epinow(
+  data = us_hospadmin,
+  delay = delay_opts(),
+  generation_time = generation_time_opts(example_generation_time),
+  rt = rt_opts(prior = list(mean = 2, sd = 0.2)),
+  stan = stan_opts(cores = 4, control = list(adapt_delta = 0.99))#, chains = 1, samples=100, warmup=25)
+  )
+  summrt_hosp_covid <- summrt::summarize_rtestimate(rt_hosp_covid)
+  
+  saveRDS(summrt_hosp_covid, here("ex_rt_objects", "epinow2_summrt_hosp_covid.rds"))
+  saveRDS(rt_hosp_covid, here("ex_rt_objects", "epinow2_rt_hosp_covid.rds"))
+
+}
+  
+```
+
+
+```{r, eval=F}
+rt_death_covid <- epinow(
+  data = us_hospadmin,
+  delay = delay_opts(inf_hosp_dist),
+  generation_time = generation_time_opts(get_generation_time(disease = "SARS-CoV-2", source = "ganyani")),
+  rt = rt_opts(prior = list(mean = 2, sd = 0.2))
+  )
+
+summrt_death_covid <- summrt::summarize_rtestimate(rt_death_covid)
+```
+
+```{r, echo=F, eval=F}
+if (file.exists(here("ex_rt_objects", "epinow2_rt_death_covid.rds"))){
+  # summrt_death_covid <- readRDS(here("ex_rt_objects", "epinow2_summrt_death_covid.rds"))
+  rt_death_covid <- readRDS(here("ex_rt_objects", "epinow2_rt_death_covid.rds")) 
+}else{
+  rt_death_covid <- epinow(
+  data = us_death,
+  delay = delay_opts(dist_spec(distribution = "")),
+  generation_time = generation_time_opts(example_generation_time),
+  rt = rt_opts(prior = list(mean = 2, sd = 0.2)),
+  stan = stan_opts(cores = 4, control = list(adapt_delta = 0.99))#, chains = 1, samples=100, warmup=25)
+  )
+  summrt_death_covid <- summrt::summarize_rtestimate(rt_death_covid)
+  
+  saveRDS(summrt_death_covid, here("ex_rt_objects", "epinow2_summrt_death_covid.rds"))
+  saveRDS(rt_death_covid, here("ex_rt_objects", "epinow2_rt_death_covid.rds"))
+
+}
+  
+```
+
+```{r}
+```
