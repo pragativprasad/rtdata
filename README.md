@@ -4,7 +4,8 @@ Contributors: Pragati V Prasad
 
 ## Install
 
-devtools::install_github(pragativprasad_rtdata)
+devtools::install_github(pragativprasad/rtdata)
+
 library(rtdata)
 
 ## Data
